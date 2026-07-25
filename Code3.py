@@ -1,210 +1,203 @@
 import re
+import ipaddress
 from urllib.parse import urlparse
 
-# -------------------------------
-# Legitimate Brands
-# -------------------------------
+# -----------------------------
+# Legitimate Brand Names
+# -----------------------------
 BRANDS = [
-    "paypal",
-    "google",
-    "amazon",
-    "netflix",
-    "microsoft",
-    "apple",
-    "facebook",
-    "instagram",
-    "chase"
+    "paypal", "google", "amazon", "netflix",
+    "microsoft", "apple", "facebook",
+    "instagram", "chase"
 ]
 
-# -------------------------------
-# Common Phishing Keywords
-# -------------------------------
+# -----------------------------
+# Phishing Keywords
+# -----------------------------
 KEYWORDS = [
-    "urgent",
-    "verify",
-    "login",
-    "password",
-    "account",
-    "bank",
-    "otp",
-    "winner",
-    "claim",
-    "gift",
-    "free",
-    "click here",
-    "security alert",
-    "update",
-    "payment",
-    "invoice"
+    "urgent", "verify", "login", "password",
+    "account", "bank", "otp", "winner",
+    "claim", "gift", "free", "click here",
+    "security alert", "update",
+    "payment", "invoice"
 ]
 
-# -------------------------------
+# -----------------------------
 # URL Shorteners
-# -------------------------------
+# -----------------------------
 SHORTENERS = [
-    "bit.ly",
-    "tinyurl.com",
-    "goo.gl",
-    "t.co",
-    "cutt.ly",
-    "is.gd"
+    "bit.ly", "tinyurl.com",
+    "goo.gl", "t.co",
+    "cutt.ly", "is.gd"
 ]
 
-# -------------------------------
+# -----------------------------
 # Suspicious TLDs
-# -------------------------------
+# -----------------------------
 SUSPICIOUS_TLDS = [
-    ".xyz",
-    ".tk",
-    ".cf",
-    ".gq",
-    ".ml",
-    ".top"
+    ".xyz", ".top", ".tk",
+    ".cf", ".gq", ".ml"
 ]
 
+# -----------------------------
+# Typosquatting Patterns
+# -----------------------------
+TYPO_PATTERNS = [
+    r"paypa1",
+    r"amaz0n",
+    r"g00gle",
+    r"micr0soft",
+    r"faceb00k"
+]
 
+# -----------------------------
+# Extract URLs
+# -----------------------------
 def extract_urls(text):
-    pattern = r'https?://[^\s]+|www\.[^\s]+'
+    pattern = r'(https?://\S+|www\.\S+)'
     return re.findall(pattern, text)
 
 
+# -----------------------------
+# Check if Domain is IP
+# -----------------------------
+def is_ip(domain):
+    try:
+        ipaddress.ip_address(domain)
+        return True
+    except ValueError:
+        return False
+
+
+# -----------------------------
+# Analyze One URL
+# -----------------------------
 def analyze_url(url):
 
     score = 0
     reasons = []
 
     parsed = urlparse(url)
+
     domain = parsed.netloc.lower()
 
-    # -----------------------------
+    # Remove port if exists
+    domain = domain.split(":")[0]
+
     # HTTP Check
-    # -----------------------------
     if parsed.scheme == "http":
         score += 1
-        reasons.append("Uses HTTP instead of HTTPS.")
+        reasons.append("Uses HTTP instead of HTTPS")
 
-    # -----------------------------
     # URL Shortener
-    # -----------------------------
     if any(short in domain for short in SHORTENERS):
         score += 3
-        reasons.append("Uses a URL shortening service.")
+        reasons.append("Uses URL Shortener")
 
-    # -----------------------------
+    # Suspicious TLD
+    if any(domain.endswith(tld) for tld in SUSPICIOUS_TLDS):
+        score += 2
+        reasons.append("Suspicious Top-Level Domain")
+
+    # IP Address
+    if is_ip(domain):
+        score += 3
+        reasons.append("Uses IP Address instead of Domain")
+
     # Typosquatting
-    # -----------------------------
-    typo_patterns = [
-        "paypa1",
-        "amaz0n",
-        "g00gle",
-        "micr0soft",
-        "faceb00k"
-    ]
-
-    for typo in typo_patterns:
-        if typo in domain:
+    for typo in TYPO_PATTERNS:
+        if re.search(typo, domain):
             score += 3
-            reasons.append("Possible Typosquatting attack.")
+            reasons.append("Possible Typosquatting")
+            break
 
-    # -----------------------------
     # Subdomain Tricking
-    # -----------------------------
-    for brand in BRANDS:
-        if brand in domain and not domain.endswith(brand + ".com"):
-            if domain.count(".") >= 2:
-                score += 3
-                reasons.append("Possible Subdomain Tricking.")
+    parts = domain.split(".")
 
-    # -----------------------------
+    if len(parts) > 3:
+        for brand in BRANDS:
+            if brand in parts[:-2]:
+                score += 3
+                reasons.append("Possible Subdomain Tricking")
+                break
+
     # Combosquatting
-    # -----------------------------
     combo_words = [
         "login",
         "verify",
-        "coupon",
-        "reward",
-        "activation",
         "security",
-        "alert",
+        "reward",
+        "coupon",
+        "activation",
         "update"
     ]
 
     for brand in BRANDS:
         if brand in domain:
             for word in combo_words:
-                if word in domain:
+                if f"{brand}-{word}" in domain or f"{word}-{brand}" in domain:
                     score += 2
-                    reasons.append("Possible Combosquatting.")
+                    reasons.append("Possible Combosquatting")
+                    break
 
-    # -----------------------------
-    # TLD Swapping
-    # -----------------------------
-    for tld in SUSPICIOUS_TLDS:
-        if domain.endswith(tld):
-            score += 2
-            reasons.append("Uses suspicious Top-Level Domain.")
+    # Homograph Attack
+    if not domain.isascii():
+        score += 3
+        reasons.append("Possible Homograph Attack")
 
-    # -----------------------------
-    # Long URL
-    # -----------------------------
-    if len(url) > 80:
-        score += 1
-        reasons.append("URL is unusually long.")
-
-    # -----------------------------
-    # '@' Symbol
-    # -----------------------------
-    if '@' in url:
+    # @ Symbol
+    if "@" in url:
         score += 2
-        reasons.append("Contains '@' symbol.")
+        reasons.append("Contains '@' Symbol")
 
-    # -----------------------------
-    # Hyphens
-    # -----------------------------
+    # Too Long URL
+    if len(url) > 100:
+        score += 1
+        reasons.append("Very Long URL")
+
+    # Too Many Hyphens
     if domain.count("-") >= 2:
         score += 1
-        reasons.append("Too many hyphens in domain.")
+        reasons.append("Too Many Hyphens")
 
-    return score, reasons
+    return score, list(set(reasons))
 
 
+# -----------------------------
+# Analyze Message
+# -----------------------------
 def analyze_message(message):
 
     score = 0
 
     red_flags = []
 
-    explanations = []
+    explanation = []
 
-    message = message.lower()
+    lower_msg = message.lower()
 
-    # -----------------------------
     # Keyword Detection
-    # -----------------------------
     found = []
 
     for word in KEYWORDS:
-        if word in message:
+        if word in lower_msg:
             found.append(word)
 
     if found:
         score += len(found)
-
         red_flags.append(
             "Phishing Keywords: " + ", ".join(found)
         )
 
-        explanations.append(
-            "The message creates urgency or requests sensitive information."
+        explanation.append(
+            "Message contains phishing-related keywords."
         )
 
-    # -----------------------------
-    # URL Analysis
-    # -----------------------------
+    # URL Detection
     urls = extract_urls(message)
 
     if urls:
-        red_flags.append("URL(s) Found")
+        red_flags.append("URLs Found")
 
     for url in urls:
 
@@ -212,19 +205,20 @@ def analyze_message(message):
 
         score += url_score
 
-        for reason in reasons:
-            red_flags.append(reason)
+        red_flags.extend(reasons)
 
-        explanations.extend(reasons)
+        explanation.extend(reasons)
 
-    # -----------------------------
+    # Remove Duplicates
+    red_flags = list(set(red_flags))
+    explanation = list(set(explanation))
+
     # Final Decision
-    # -----------------------------
-    if score >= 8:
+    if score >= 10:
         level = "PHISHING"
         action = "BLOCK"
 
-    elif score >= 4:
+    elif score >= 5:
         level = "SUSPICIOUS"
         action = "WARNING"
 
@@ -232,49 +226,46 @@ def analyze_message(message):
         level = "SAFE"
         action = "ALLOW"
 
-    return level, action, urls, red_flags, explanations
+    return score, level, action, urls, red_flags, explanation
 
 
-# ====================================================
+# -----------------------------
 # Main Program
-# ====================================================
-
+# -----------------------------
 print("=" * 70)
-print("        PHISHING AWARENESS ANALYSIS SYSTEM")
+print("      PHISHING AWARENESS ANALYSIS SYSTEM")
 print("=" * 70)
 
 message = input("\nPaste Email or Message:\n\n")
 
-level, action, urls, flags, reasons = analyze_message(message)
+score, level, action, urls, flags, reasons = analyze_message(message)
 
 print("\n" + "=" * 70)
 print("ANALYSIS REPORT")
 print("=" * 70)
 
-print("Risk Level :", level)
-print("Firewall Action :", action)
+print(f"Risk Score      : {score}")
+print(f"Risk Level      : {level}")
+print(f"Firewall Action : {action}")
 
 print("\nDetected URLs")
-
 if urls:
-    for u in urls:
-        print("•", u)
+    for url in urls:
+        print("•", url)
 else:
     print("No URLs Found")
 
 print("\nRed Flags")
-
 if flags:
-    for f in flags:
-        print("•", f)
+    for flag in flags:
+        print("•", flag)
 else:
     print("No Red Flags Found")
 
 print("\nWhy is this message unsafe?")
-
 if reasons:
-    for r in set(reasons):
-        print("•", r)
+    for reason in reasons:
+        print("•", reason)
 else:
     print("No suspicious behaviour detected.")
 
